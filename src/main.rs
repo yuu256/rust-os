@@ -5,6 +5,7 @@
 #![no_main]
 #![feature(offset_of)]
 
+use core::arch::asm;
 use core::mem::offset_of;
 use core::mem::size_of;
 use core::panic::PanicInfo;
@@ -60,10 +61,10 @@ const _: () = assert!(offset_of!(EfiSystemTable, boot_services) == 96);
 #[derive(Debug)]
 struct EfiGraphicsOutputProtocolPixelInfo {
     pub version: u32,
-    pub horizontal_resolution: u32,// 水平方向の画素数
-    pub vertical_resolution: u32,// 垂直方向の画素数
+    pub horizontal_resolution: u32, // 水平方向の画素数
+    pub vertical_resolution: u32,   // 垂直方向の画素数
     _padding: [u32; 5],
-    pub pixels_per_scan_line: u32,// 水平方向のデータに含まれる画素数
+    pub pixels_per_scan_line: u32, // 水平方向のデータに含まれる画素数
 }
 const _: () = assert!(size_of::<EfiGraphicsOutputProtocolPixelInfo>() == 36);
 
@@ -74,18 +75,20 @@ struct EfiGraphicsOutputProtocolMode<'a> {
     pub mode: u32,
     pub info: &'a EfiGraphicsOutputProtocolPixelInfo,
     pub size_of_info: u64,
-    pub frame_buffer_base: usize,// フレームバッファの開始アドレス
-    pub frame_buffer_size: usize,// フレームバッファのサイズ
+    pub frame_buffer_base: usize, // フレームバッファの開始アドレス
+    pub frame_buffer_size: usize, // フレームバッファのサイズ
 }
 
 #[repr(C)]
 #[derive(Debug)]
 struct EfiGraphicsOutputProtocol<'a> {
     reserved: [u64; 3],
-    pub mode: &'a EfiGraphicsOutputProtocolMode<'a>,// 現在利用の画面モードに対応する情報を持った構造体へのポインタ
+    pub mode: &'a EfiGraphicsOutputProtocolMode<'a>, // 現在利用の画面モードに対応する情報を持った構造体へのポインタ
 }
 
-fn locate_graphic_protocol<'a>(efi_system_table: &EfiSystemTable,) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
+fn locate_graphic_protocol<'a>(
+    efi_system_table: &EfiSystemTable,
+) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
     let mut graphic_output_protocol = null_mut::<EfiGraphicsOutputProtocol>();
     let status = (efi_system_table.boot_services.locate_protocol)(
         &EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
@@ -98,10 +101,16 @@ fn locate_graphic_protocol<'a>(efi_system_table: &EfiSystemTable,) -> Result<&'a
     Ok(unsafe { &*graphic_output_protocol })
 }
 
+pub fn hlt() {
+    unsafe {
+        asm!("hlt");
+    }
+}
+
 //===================================================================
 
 #[no_mangle]
-fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable)  {
+fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let efi_graphics_output_protocol = locate_graphic_protocol(efi_system_table).unwrap();
     let vram_addr = efi_graphics_output_protocol.mode.frame_buffer_base;
     let vram_byte_size = efi_graphics_output_protocol.mode.frame_buffer_size;
@@ -111,10 +120,14 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable)  {
     for e in vram {
         *e = 0xffffff;
     }
-    loop {}
+    loop {
+        hlt();
+    }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop {}
+    loop {
+        hlt();
+    }
 }
