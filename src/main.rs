@@ -1,11 +1,10 @@
-//cargo build --target x86_64-unknown-uefi
-//cp target/x86_64-unknown-uefi/debug/rust-os.efi mnt/EFI/BOOT/BOOTX64.EFI
-//qemu-system-x86_64 -bios third_party/ovmf/RELEASEX64_OVMF.fd -drive format=raw,file=fat:rw:mnt
+// cargo run   -> ビルド、BOOTX64.EFI へのコピー、QEMU起動を一括実行
+// cargo build -> x86_64-unknown-uefi ターゲット向けにビルド
 
 #![no_std]
 #![no_main]
 
-#![no_mangle]
+#[no_mangle]
 fn efi_main() {
     loop {}
 }
