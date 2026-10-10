@@ -92,8 +92,8 @@ impl<'a> Iterator for MemoryMapIterator<'a> {
     fn next(&mut self) -> Option<&'a EfiMemoryDescriptor> {
         if self.ofs >= self.map.memory_map_size {
             return None;
-        }else {
-            let e:&EfiMemoryDescriptor = unsafe {
+        } else {
+            let e: &EfiMemoryDescriptor = unsafe {
                 &*(self.map.memory_map_buffer.as_ptr().add(self.ofs) as *const EfiMemoryDescriptor)
             };
             self.ofs += self.map.descriptor_size;
@@ -117,7 +117,6 @@ impl MemoryMapHolder {
     }
 }
 
-
 #[repr(C)]
 struct EfiBootServicesTable {
     _reserved0: [u64; 7],
@@ -128,7 +127,9 @@ struct EfiBootServicesTable {
         descriptor_size: *mut usize,
         descriptor_version: *mut u32,
     ) -> EfiStatus,
-    _reserved1: [u64; 32],
+    _reserved1: [u64; 21],
+    exit_boot_services: extern "win64" fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus,
+    _reserved4: [u64; 10],
     locate_protocol: extern "win64" fn(
         protocol: *const EfiGuid,
         registration: *const EfiVoid,
@@ -136,10 +137,7 @@ struct EfiBootServicesTable {
     ) -> EfiStatus,
 }
 impl EfiBootServicesTable {
-    fn get_memory_map(
-        &self,
-        map: &mut MemoryMapHolder
-    ) -> EfiStatus {
+    fn get_memory_map(&self, map: &mut MemoryMapHolder) -> EfiStatus {
         (self.get_memory_map)(
             &mut map.memory_map_size,
             map.memory_map_buffer.as_mut_ptr(),
@@ -150,6 +148,7 @@ impl EfiBootServicesTable {
     }
 }
 const _: () = assert!(offset_of!(EfiBootServicesTable, get_memory_map) == 56);
+const _: () = assert!(offset_of!(EfiBootServicesTable, exit_boot_services) == 232);
 const _: () = assert!(offset_of!(EfiBootServicesTable, locate_protocol) == 320);
 
 #[repr(C)]
@@ -212,13 +211,13 @@ pub fn hlt() {
 //===================================================================
 
 #[no_mangle]
-fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
+fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let mut vram = init_vram(efi_system_table).expect("init_vram failed");
 
     let vw = vram.width();
     let vh = vram.height();
     fill_rect(&mut vram, 0x000000, 0, 0, vw, vh).expect("fill_rect failed"); // 画面全体を黒で塗りつぶす
-    
+
     draw_test_pattern(&mut vram);
     let mut w = VramTextWriter::new(&mut vram);
     for i in 0..4 {
@@ -226,7 +225,9 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     }
 
     let mut memory_map = MemoryMapHolder::new();
-    let status = efi_system_table.boot_services.get_memory_map(&mut memory_map);
+    let status = efi_system_table
+        .boot_services
+        .get_memory_map(&mut memory_map);
     writeln!(w, "{status:?}").unwrap();
     let mut total_memory_pages = 0;
     for e in memory_map.iter() {
@@ -236,9 +237,15 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
         total_memory_pages += e.number_of_pages;
         writeln!(w, "{e:?}").unwrap();
     }
-    let total_memory_size_mib = total_memory_pages * 4096/1024/1024;
-    writeln!(w, "Total: {total_memory_pages} pages = {total_memory_size_mib} MiB").unwrap();
+    let total_memory_size_mib = total_memory_pages * 4096 / 1024 / 1024;
+    writeln!(
+        w,
+        "Total: {total_memory_pages} pages = {total_memory_size_mib} MiB"
+    )
+    .unwrap();
 
+    exit_from_efi_boot_services(image_handle, efi_system_table, &mut memory_map);
+    writeln!(w, "Hello, Non-UEFI world!").unwrap();
     loop {
         hlt();
     }
@@ -246,23 +253,24 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
 
 fn draw_test_pattern<T: Bitmap>(buf: &mut T) {
     let w = 128;
-    let left = buf.width()-w-1;
+    let left = buf.width() - w - 1;
     let colors = [0x000000, 0xff0000, 0x00ff00, 0x0000ff, 0xffffff];
     let h = 64;
     for (i, c) in colors.iter().enumerate() {
         let y = i as i64 * h;
         fill_rect(buf, *c, left, y, h, h).expect("fill_rect failed");
-        fill_rect(buf, *c, left+h, y, h, h).expect("fill_rect failed");
+        fill_rect(buf, *c, left + h, y, h, h).expect("fill_rect failed");
     }
 
-    let points = [(0, 0), (0,w), (w,0),(w,w)];
-    for (x0,y0) in points.iter() {
-        for (x1,y1) in points.iter() {
-            let _ = draw_line(buf, 0xffffff, left+*x0, *y0, left+*x1, *y1).expect("draw_line failed");
+    let points = [(0, 0), (0, w), (w, 0), (w, w)];
+    for (x0, y0) in points.iter() {
+        for (x1, y1) in points.iter() {
+            let _ = draw_line(buf, 0xffffff, left + *x0, *y0, left + *x1, *y1)
+                .expect("draw_line failed");
         }
     }
-    draw_str_fg(buf, left,h*colors.len() as i64, 0x00ff00,"0123456789");
-    draw_str_fg(buf, left,h*colors.len() as i64+16, 0x00ff00,"ABCDEF");
+    draw_str_fg(buf, left, h * colors.len() as i64, 0x00ff00, "0123456789");
+    draw_str_fg(buf, left, h * colors.len() as i64 + 16, 0x00ff00, "ABCDEF");
 }
 
 #[panic_handler]
@@ -482,5 +490,21 @@ impl<'a> Write for VramTextWriter<'a> {
             }
         }
         Ok(())
+    }
+}
+
+fn exit_from_efi_boot_services(
+    image_handle: EfiHandle,
+    efi_system_table: &EfiSystemTable,
+    memory_map: &mut MemoryMapHolder,
+) {
+    loop {
+        let status = efi_system_table.boot_services.get_memory_map(memory_map);
+        assert_eq!(status, EfiStatus::Success);
+        let status =
+            (efi_system_table.boot_services.exit_boot_services)(image_handle, memory_map.map_key);
+        if status == EfiStatus::Success {
+            break;
+        }
     }
 }
